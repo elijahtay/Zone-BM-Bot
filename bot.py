@@ -39,11 +39,11 @@ SGT                     = pytz.timezone("Asia/Singapore")
 # ── Team → Areas mapping ──────────────────────────────────────────────────────
 # Location values must match exactly what's in your Google Sheet's Location column
 TEAM_AREAS = {
-    "Atrium":         ["Atrium"],
-    "Male Toilets":   ["Atrium - Bookstore Male Toilet", "Atrium - IDR Male Toilet"],
-    "Female Toilets": ["Atrium - Bookstore Female Toilet", "Atrium - IDR Female Toilet"],
-    "Audi":           ["Auditorium"],
-    "Lift Lobby":     ["Lift Lobby & Concept Walkway"],
+    "ATRIUM":         ["Atrium"],
+    "MALE TOILETS":   ["Atrium - Bookstore Male Toilet", "Atrium - IDR Male Toilet"],
+    "FEMALE TOILETS": ["Atrium - Bookstore Female Toilet", "Atrium - IDR Female Toilet"],
+    "AUDI":           ["Auditorium"],
+    "LIFT LOBBY":     ["Lift Lobby & Concept Walkway"],
 }
 
 TEAM_NAMES = list(TEAM_AREAS.keys())
