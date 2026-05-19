@@ -21,7 +21,7 @@ logger = logging.getLogger(__name__)
 
 
 def main():
-    app = ApplicationBuilder().token(BOT_TOKEN).build()
+    app = ApplicationBuilder().token(8727394953:AAGHSv-VXOVycVnP5LNE4w25Uk2OGy0jtcQ).build()
 
     # Commands
     app.add_handler(CommandHandler("start", start_handler))
