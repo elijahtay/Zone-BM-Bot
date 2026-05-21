@@ -39,13 +39,11 @@ SGT                     = pytz.timezone("Asia/Singapore")
 # ── Team → Areas mapping ──────────────────────────────────────────────────────
 # Location values must match exactly what's in your Google Sheet's Location column
 TEAM_AREAS = {
-    "ATRIUM":         ["Atrium"],
-    "BOOKSTORE MALE TOILETS":   ["Atrium - Bookstore Male Toilet"],
-    "BOOKSTORE FEMALE TOILETS": ["Atrium - Bookstore Female Toilet"],
-    "AUDI":           ["Auditorium"],
-    "LIFT LOBBY":     ["Lift Lobby & Concept Walkway"],
-    "IDR MALE TOILETS":   ["Atrium - IDR Male Toilet"],
-    "IDR FEMALE TOILETS":   ["Atrium - IDR Female Toilet"],
+    "Atrium":         ["Atrium"],
+    "Male Toilets":   ["Atrium - Bookstore Male Toilet", "Atrium - IDR Male Toilet"],
+    "Female Toilets": ["Atrium - Bookstore Female Toilet", "Atrium - IDR Female Toilet"],
+    "Audi":           ["Auditorium"],
+    "Lift Lobby":     ["Lift Lobby & Concept Walkway"],
 }
 
 TEAM_NAMES = list(TEAM_AREAS.keys())
@@ -204,9 +202,18 @@ async def select_team_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     areas      = TEAM_AREAS.get(team, [])
     areas_text = "\n".join(f"  • {a}" for a in areas)
 
+    # Special notice for Female Toilets team
+    special_notice = ""
+    if team == "Female Toilets":
+        special_notice = (
+            "\n\n⚠️ *Important Reminder:*\n"
+            "Please note _not_ to wet wash the nursing room areas in the female toilets 🙂"
+        )
+
     await query.edit_message_text(
         f"✅ You've joined *{team}*!\n\n"
-        f"📍 *Your assigned areas:*\n{areas_text}\n\n"
+        f"📍 *Your assigned areas:*\n{areas_text}"
+        f"{special_notice}\n\n"
         f"What would you like to do?",
         parse_mode="Markdown",
         reply_markup=main_menu_keyboard()
