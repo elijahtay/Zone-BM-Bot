@@ -40,7 +40,8 @@ SGT                     = pytz.timezone("Asia/Singapore")
 # Location values must match exactly what's in your Google Sheet's Location column
 TEAM_AREAS = {
     "Atrium":         ["Atrium"],
-    "Male Toilets":   ["Atrium - Bookstore Male Toilet", "Atrium - IDR Male Toilet"],
+    "Male Toilets":   ["Atrium - Bookstore Male Toilet"],
+    "IDR Male Toilet":        [ "Atrium - IDR Male Toilet"],
     "Bookstore Female Toilet": ["Atrium - Bookstore Female Toilet"],
     "IDR Female Toilet":        ["Atrium - IDR Female Toilet"],
     "Audi":           ["Auditorium"],
