@@ -39,11 +39,14 @@ SGT                     = pytz.timezone("Asia/Singapore")
 # ── Team → Areas mapping ──────────────────────────────────────────────────────
 # Location values must match exactly what's in your Google Sheet's Location column
 TEAM_AREAS = {
-    "Atrium":         ["Atrium"],
-    "Male Toilets":   ["Atrium - Bookstore Male Toilet", "Atrium - IDR Male Toilet"],
-    "Female Toilets": ["Atrium - Bookstore Female Toilet", "Atrium - IDR Female Toilet"],
-    "Audi":           ["Auditorium"],
     "Lift Lobby":     ["Lift Lobby & Concept Walkway"],
+    "Atrium":         ["Atrium"],
+    "Bookstore Male Toilets":   ["Atrium - Bookstore Male Toilet"],
+    "Bookstore Female Toilets": ["Atrium - Bookstore Female Toilet"],
+    "IDR Male Toilets": ["Atrium - IDR Male Toilet"],
+    "IDR Female Toilets": ["Atrium - IDR Female Toilet"],
+    "Audi":           ["Auditorium"],
+    
 }
 
 TEAM_NAMES = list(TEAM_AREAS.keys())
@@ -204,7 +207,7 @@ async def select_team_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Special notice for Female Toilets team
     special_notice = ""
-    if team == "Female Toilets":
+    if team == "Bookstore Female Toilets, IDR Female Toilets":
         special_notice = (
             "\n\n⚠️ *Important Reminder:*\n"
             "Please note _not_ to wet wash the nursing room areas in the female toilets 🙂"
