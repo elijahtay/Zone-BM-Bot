@@ -1,7 +1,6 @@
 import os
 import json
 import logging
-from datetime import datetime
 import pytz
 import gspread
 from dotenv import load_dotenv
@@ -58,6 +57,7 @@ _progress: dict[str, dict[int, bool]] = {team: {} for team in TEAM_NAMES}
 _user_teams: dict[int, str] = {}
 _tasks_cache: list[dict] = []
 _weekend_tasks_cache: list[dict] = []
+_weekend_mode: bool | None = None  # None = not decided yet this session; asked once at /start
 
 def set_user_team(user_id: int, team: str): _user_teams[user_id] = team
 def get_user_team(user_id: int): return _user_teams.get(user_id)
@@ -71,14 +71,26 @@ def toggle_task(team: str, task_id: int) -> bool:
     _progress[team][task_id] = not current
     return not current
 
-def is_weekend() -> bool:
-    """True on Saturday/Sunday, Singapore time."""
-    return datetime.now(SGT).weekday() >= 5  # Mon=0 ... Sat=5, Sun=6
+def weekend_mode_decided() -> bool:
+    return _weekend_mode is not None
+
+def weekend_mode_enabled() -> bool:
+    return bool(_weekend_mode)
+
+def set_weekend_mode(enabled: bool):
+    global _weekend_mode
+    _weekend_mode = enabled
+    logger.info(f"Weekend mode set to {enabled}.")
+
+def clear_weekend_mode():
+    """Un-decide weekend mode, so the next /start asks again."""
+    global _weekend_mode
+    _weekend_mode = None
 
 def get_all_tasks_for_today() -> list[dict]:
-    """Daily tasks, plus weekend-tab tasks on Sat/Sun."""
+    """Daily tasks, plus weekend-tab tasks if weekend mode is switched on."""
     tasks = list(fetch_tasks())
-    if is_weekend():
+    if weekend_mode_enabled():
         tasks += fetch_weekend_tasks()
     return tasks
 
@@ -220,7 +232,14 @@ def task_detail_text(task: dict, team: str) -> str:
     return "\n".join(lines)
 
 # ── Handlers ──────────────────────────────────────────────────────────────────
-async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+def weekend_toggle_keyboard() -> InlineKeyboardMarkup:
+    return InlineKeyboardMarkup([
+        [InlineKeyboardButton("✅ Yes, include weekend tasks", callback_data="weekend_yes")],
+        [InlineKeyboardButton("➡️ No, daily tasks only",       callback_data="weekend_no")],
+    ])
+
+
+async def show_team_selection(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user         = update.effective_user
     current_team = get_user_team(user.id)
     msg = (
@@ -232,6 +251,28 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=team_selection_keyboard(current_team))
     else:
         await update.callback_query.edit_message_text(msg, parse_mode="Markdown", reply_markup=team_selection_keyboard(current_team))
+
+
+async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if not weekend_mode_decided():
+        msg = (
+            "🎉 *Before we start* — should today's checklist include the extra "
+            "*weekend tasks* on top of the daily ones?\n\n"
+            "_This applies for everyone until an admin runs /reset._"
+        )
+        if update.message:
+            await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=weekend_toggle_keyboard())
+        else:
+            await update.callback_query.edit_message_text(msg, parse_mode="Markdown", reply_markup=weekend_toggle_keyboard())
+        return
+    await show_team_selection(update, context)
+
+
+async def weekend_toggle_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    set_weekend_mode(query.data == "weekend_yes")
+    await show_team_selection(update, context)
 
 
 async def select_team_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -329,7 +370,7 @@ async def render_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     p          = get_team_progress(team)
     areas      = ", ".join(TEAM_AREAS.get(team, []))
 
-    weekend_note = "\n🎉 _Weekend tasks included today_" if is_weekend() else ""
+    weekend_note = "\n🎉 _Weekend tasks included today_" if weekend_mode_enabled() else ""
     header = (
         f"📋 *{team} Checklist*\n"
         f"📍 _{areas}_"
@@ -440,8 +481,10 @@ async def reset_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     reset_all_progress()
     fetch_tasks(force=True)
     fetch_weekend_tasks(force=True)
+    clear_weekend_mode()
     await update.message.reply_text(
-        "🔄 *Progress reset complete.*\nAll teams cleared and tasks refreshed from Google Sheets.",
+        "🔄 *Progress reset complete.*\nAll teams cleared and tasks refreshed from Google Sheets.\n"
+        "You'll be asked about weekend tasks again on the next /start.",
         parse_mode="Markdown"
     )
 
@@ -462,6 +505,7 @@ async def daily_reset():
     reset_all_progress()
     fetch_tasks(force=True)
     fetch_weekend_tasks(force=True)
+    clear_weekend_mode()
     logger.info("Daily reset complete.")
 
 def setup_scheduler(app):
@@ -481,6 +525,7 @@ def main():
     app.add_handler(CommandHandler("reset",     reset_handler))
     app.add_handler(CommandHandler("summary",   summary_handler))
 
+    app.add_handler(CallbackQueryHandler(weekend_toggle_handler, pattern="^weekend_(yes|no)$"))
     app.add_handler(CallbackQueryHandler(select_team_handler,  pattern="^team_"))
     app.add_handler(CallbackQueryHandler(main_menu_handler,    pattern="^main_menu$"))
     app.add_handler(CallbackQueryHandler(change_team_handler,  pattern="^change_team$"))
