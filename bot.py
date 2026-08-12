@@ -1,6 +1,7 @@
 import os
 import json
 import logging
+from datetime import datetime
 import pytz
 import gspread
 from dotenv import load_dotenv
@@ -25,6 +26,7 @@ BOT_TOKEN               = os.environ["BOT_TOKEN"]
 GOOGLE_SHEET_ID         = os.environ["GOOGLE_SHEET_ID"]
 GOOGLE_CREDENTIALS_JSON = os.environ["GOOGLE_CREDENTIALS_JSON"]
 SHEET_TAB_NAME          = os.environ.get("SHEET_TAB_NAME", "Tasks")
+WEEKEND_SHEET_TAB_NAME  = os.environ.get("WEEKEND_SHEET_TAB_NAME", "Weekend")
 COL_TASK                = os.environ.get("COL_TASK", "Task")
 COL_CATEGORY            = os.environ.get("COL_CATEGORY", "Category")
 COL_INSTRUCTIONS        = os.environ.get("COL_INSTRUCTIONS", "Instructions")
@@ -35,6 +37,7 @@ RESET_HOUR              = int(os.environ.get("RESET_HOUR", "3"))
 RESET_MINUTE            = int(os.environ.get("RESET_MINUTE", "0"))
 TASKS_PER_PAGE          = 8
 SGT                     = pytz.timezone("Asia/Singapore")
+WEEKEND_ID_OFFSET       = 100_000  # keeps weekend-tab task IDs from colliding with daily-tab task IDs
 
 # ── Team → Areas mapping ──────────────────────────────────────────────────────
 # Location values must match exactly what's in your Google Sheet's Location column
@@ -54,6 +57,7 @@ TEAM_NAMES = list(TEAM_AREAS.keys())
 _progress: dict[str, dict[int, bool]] = {team: {} for team in TEAM_NAMES}
 _user_teams: dict[int, str] = {}
 _tasks_cache: list[dict] = []
+_weekend_tasks_cache: list[dict] = []
 
 def set_user_team(user_id: int, team: str): _user_teams[user_id] = team
 def get_user_team(user_id: int): return _user_teams.get(user_id)
@@ -67,10 +71,24 @@ def toggle_task(team: str, task_id: int) -> bool:
     _progress[team][task_id] = not current
     return not current
 
+def is_weekend() -> bool:
+    """True on Saturday/Sunday, Singapore time."""
+    return datetime.now(SGT).weekday() >= 5  # Mon=0 ... Sat=5, Sun=6
+
+def get_all_tasks_for_today() -> list[dict]:
+    """Daily tasks, plus weekend-tab tasks on Sat/Sun."""
+    tasks = list(fetch_tasks())
+    if is_weekend():
+        tasks += fetch_weekend_tasks()
+    return tasks
+
+def find_task_by_id(task_id: int) -> dict | None:
+    return next((t for t in get_all_tasks_for_today() if t["id"] == task_id), None)
+
 def get_team_tasks(team: str) -> list[dict]:
-    """Return only tasks whose Location matches the team's assigned areas."""
+    """Return only today's tasks whose Location matches the team's assigned areas."""
     areas = TEAM_AREAS.get(team, [])
-    return [t for t in fetch_tasks() if t["location"] in areas]
+    return [t for t in get_all_tasks_for_today() if t["location"] in areas]
 
 def get_team_progress(team: str) -> dict:
     tasks = get_team_tasks(team)
@@ -90,41 +108,62 @@ def progress_bar(pct: int, width: int = 10) -> str:
     return "█" * filled + "░" * (width - filled)
 
 # ── Google Sheets ─────────────────────────────────────────────────────────────
+def _fetch_tasks_from_tab(tab_name: str, id_offset: int = 0) -> list[dict]:
+    """Read one worksheet tab and return it as a list of task dicts."""
+    logger.info(f"[SHEETS] Parsing credentials JSON (length={len(GOOGLE_CREDENTIALS_JSON)})...")
+    creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
+    logger.info(f"[SHEETS] client_email={creds_dict.get('client_email', 'MISSING')}")
+    creds = Credentials.from_service_account_info(creds_dict, scopes=[
+        "https://www.googleapis.com/auth/spreadsheets.readonly",
+        "https://www.googleapis.com/auth/drive.readonly",
+    ])
+    client  = gspread.authorize(creds)
+    logger.info(f"[SHEETS] Opening sheet ID={GOOGLE_SHEET_ID}, tab={tab_name}...")
+    sheet   = client.open_by_key(GOOGLE_SHEET_ID).worksheet(tab_name)
+    records = sheet.get_all_records()
+    logger.info(f"[SHEETS] Got {len(records)} rows from '{tab_name}'.")
+    tasks = []
+    for i, row in enumerate(records):
+        task = {
+            "id":           id_offset + i,
+            "task":         str(row.get(COL_TASK, "")).strip(),
+            "category":     str(row.get(COL_CATEGORY, "")).strip(),
+            "instructions": str(row.get(COL_INSTRUCTIONS, "")).strip(),
+            "equipment":    str(row.get(COL_EQUIPMENT, "")).strip(),
+            "location":     str(row.get(COL_LOCATION, "")).strip(),
+        }
+        if task["task"]:
+            tasks.append(task)
+    return tasks
+
+
 def fetch_tasks(force: bool = False) -> list[dict]:
     global _tasks_cache
     if _tasks_cache and not force:
         return _tasks_cache
     try:
-        logger.info(f"[SHEETS] Parsing credentials JSON (length={len(GOOGLE_CREDENTIALS_JSON)})...")
-        creds_dict = json.loads(GOOGLE_CREDENTIALS_JSON)
-        logger.info(f"[SHEETS] client_email={creds_dict.get('client_email', 'MISSING')}")
-        creds = Credentials.from_service_account_info(creds_dict, scopes=[
-            "https://www.googleapis.com/auth/spreadsheets.readonly",
-            "https://www.googleapis.com/auth/drive.readonly",
-        ])
-        client  = gspread.authorize(creds)
-        logger.info(f"[SHEETS] Opening sheet ID={GOOGLE_SHEET_ID}, tab={SHEET_TAB_NAME}...")
-        sheet   = client.open_by_key(GOOGLE_SHEET_ID).worksheet(SHEET_TAB_NAME)
-        records = sheet.get_all_records()
-        logger.info(f"[SHEETS] Got {len(records)} rows.")
-        tasks = []
-        for i, row in enumerate(records):
-            task = {
-                "id":           i,
-                "task":         str(row.get(COL_TASK, "")).strip(),
-                "category":     str(row.get(COL_CATEGORY, "")).strip(),
-                "instructions": str(row.get(COL_INSTRUCTIONS, "")).strip(),
-                "equipment":    str(row.get(COL_EQUIPMENT, "")).strip(),
-                "location":     str(row.get(COL_LOCATION, "")).strip(),
-            }
-            if task["task"]:
-                tasks.append(task)
+        tasks = _fetch_tasks_from_tab(SHEET_TAB_NAME)
         _tasks_cache = tasks
         logger.info(f"[SHEETS] Cached {len(tasks)} tasks.")
         return tasks
     except Exception as e:
         logger.error(f"Sheet fetch error: {e}")
         return _tasks_cache
+
+
+def fetch_weekend_tasks(force: bool = False) -> list[dict]:
+    """Same as fetch_tasks(), but reads the weekend-only tab (e.g. 'Weekend')."""
+    global _weekend_tasks_cache
+    if _weekend_tasks_cache and not force:
+        return _weekend_tasks_cache
+    try:
+        tasks = _fetch_tasks_from_tab(WEEKEND_SHEET_TAB_NAME, id_offset=WEEKEND_ID_OFFSET)
+        _weekend_tasks_cache = tasks
+        logger.info(f"[SHEETS] Cached {len(tasks)} weekend tasks.")
+        return tasks
+    except Exception as e:
+        logger.error(f"Weekend sheet fetch error: {e}")
+        return _weekend_tasks_cache
 
 # ── Keyboards ─────────────────────────────────────────────────────────────────
 def team_selection_keyboard(current_team: str = None) -> InlineKeyboardMarkup:
@@ -290,9 +329,11 @@ async def render_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     p          = get_team_progress(team)
     areas      = ", ".join(TEAM_AREAS.get(team, []))
 
+    weekend_note = "\n🎉 _Weekend tasks included today_" if is_weekend() else ""
     header = (
         f"📋 *{team} Checklist*\n"
-        f"📍 _{areas}_\n"
+        f"📍 _{areas}_"
+        f"{weekend_note}\n"
         f"{progress_bar(p['pct'])} {p['done']}/{p['total']} done\n\n"
         f"Tap a task to view details & mark complete."
     )
@@ -328,7 +369,7 @@ async def task_detail_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
         return
 
     task_id = int(query.data.replace("task_", ""))
-    task    = next((t for t in fetch_tasks() if t["id"] == task_id), None)
+    task    = find_task_by_id(task_id)
     if not task:
         await query.edit_message_text("⚠️ Task not found.")
         return
@@ -351,7 +392,7 @@ async def toggle_task_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     task_id   = int(query.data.replace("toggle_", ""))
     new_state = toggle_task(team, task_id)
-    task      = next((t for t in fetch_tasks() if t["id"] == task_id), None)
+    task      = find_task_by_id(task_id)
     if not task:
         await query.edit_message_text("⚠️ Task not found.")
         return
@@ -398,6 +439,7 @@ async def reset_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     reset_all_progress()
     fetch_tasks(force=True)
+    fetch_weekend_tasks(force=True)
     await update.message.reply_text(
         "🔄 *Progress reset complete.*\nAll teams cleared and tasks refreshed from Google Sheets.",
         parse_mode="Markdown"
@@ -419,6 +461,7 @@ async def daily_reset():
     logger.info("Daily reset running...")
     reset_all_progress()
     fetch_tasks(force=True)
+    fetch_weekend_tasks(force=True)
     logger.info("Daily reset complete.")
 
 def setup_scheduler(app):
