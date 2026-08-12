@@ -245,7 +245,7 @@ async def select_team_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
 
     # Special notice for Female Toilets team
     special_notice = ""
-    if team in ("Bookstore Female Toilet", "IDR Female Toilet"):
+    if team in ("Keyboard Female Toilet", "Drums Female Toilet"):
         special_notice = (
             "\n\n⚠️ *Important Reminder:*\n"
             "Please note _not_ to wet wash the nursing room areas in the female toilets 🙂"
