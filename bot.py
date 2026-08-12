@@ -234,8 +234,8 @@ def task_detail_text(task: dict, team: str) -> str:
 # ── Handlers ──────────────────────────────────────────────────────────────────
 def weekend_toggle_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
-        [InlineKeyboardButton("✅ Yes, include weekend tasks", callback_data="weekend_yes")],
-        [InlineKeyboardButton("➡️ No, daily tasks only",       callback_data="weekend_no")],
+        [InlineKeyboardButton("🗓️ Weekday Zone BM", callback_data="weekend_no")],
+        [InlineKeyboardButton("🧹 Weekend Reset",   callback_data="weekend_yes")],
     ])
 
 
@@ -256,8 +256,8 @@ async def show_team_selection(update: Update, context: ContextTypes.DEFAULT_TYPE
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not weekend_mode_decided():
         msg = (
-            "🎉 *Before we start* — should today's checklist include the extra "
-            "*weekend tasks* on top of the daily ones?\n\n"
+            "👋 *Welcome to the Zone BM Checklist Bot.*\n\n"
+            "Which checklist is this?\n\n"
             "_This applies for everyone until an admin runs /reset._"
         )
         if update.message:
@@ -370,7 +370,7 @@ async def render_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     p          = get_team_progress(team)
     areas      = ", ".join(TEAM_AREAS.get(team, []))
 
-    weekend_note = "\n🎉 _Weekend tasks included today_" if weekend_mode_enabled() else ""
+    weekend_note = "\n🧹 _Weekend Reset — weekend tasks included_" if weekend_mode_enabled() else ""
     header = (
         f"📋 *{team} Checklist*\n"
         f"📍 _{areas}_"
