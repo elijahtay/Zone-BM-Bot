@@ -29,9 +29,9 @@ SHEET_TAB_NAME          = os.environ.get("SHEET_TAB_NAME", "Tasks")
 WEEKEND_SHEET_TAB_NAME  = os.environ.get("WEEKEND_SHEET_TAB_NAME", "Weekend")
 COL_TASK                = os.environ.get("COL_TASK", "Task")
 COL_CATEGORY            = os.environ.get("COL_CATEGORY", "Category")
-COL_INSTRUCTIONS        = os.environ.get("COL_INSTRUCTIONS", "Instructions")
+COL_INSTRUCTIONS        = os.environ.get("COL_INSTRUCTIONS", "Task Description")
 COL_EQUIPMENT           = os.environ.get("COL_EQUIPMENT", "Equipment")
-COL_LOCATION            = os.environ.get("COL_LOCATION", "Location")
+COL_LOCATION            = os.environ.get("COL_LOCATION", "Area")
 ADMIN_USER_IDS          = [int(x.strip()) for x in os.environ.get("ADMIN_USER_IDS", "").split(",") if x.strip()]
 RESET_HOUR              = int(os.environ.get("RESET_HOUR", "3"))
 RESET_MINUTE            = int(os.environ.get("RESET_MINUTE", "0"))
@@ -40,7 +40,7 @@ SGT                     = pytz.timezone("Asia/Singapore")
 WEEKEND_ID_OFFSET       = 100_000  # keeps weekend-tab task IDs from colliding with daily-tab task IDs
 
 # ── Team → Areas mapping ──────────────────────────────────────────────────────
-# Location values must match exactly what's in your Google Sheet's Location column
+# Location values must match exactly what's in your Google Sheet's Area column (COL_LOCATION)
 TEAM_AREAS = {
     "Atrium":         ["Atrium"],
     "Keyboard Male Toilets":   ["Atrium - Keyboard Male Toilet"],
@@ -315,7 +315,7 @@ async def render_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE, p
         msg = (
             f"⚠️ No tasks found for *{team}*.\n\n"
             f"Assigned areas: {', '.join(TEAM_AREAS.get(team, []))}\n\n"
-            "_Check that the Location column in your sheet matches exactly._"
+            f"_Check that the {COL_LOCATION} column in your sheet matches exactly._"
         )
         markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
         if query: await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=markup)
