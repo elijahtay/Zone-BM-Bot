@@ -43,10 +43,10 @@ WEEKEND_ID_OFFSET       = 100_000  # keeps weekend-tab task IDs from colliding w
 # Location values must match exactly what's in your Google Sheet's Area column (COL_LOCATION)
 TEAM_AREAS = {
     "Atrium":         ["Atrium"],
-    "Keyboard Male Toilets":   ["Keyboard Male Toilet"],
-    "Drums Male Toilet":        [ "Drums Male Toilet"],
-    "Keyboard Female Toilet": ["Keyboard Female Toilet"],
-    "Drums Female Toilet":        ["Drums Female Toilet"],
+    "Keyboard Male Toilets":   ["Atrium - Keyboard Male Toilet"],
+    "Drums Male Toilet":        [ "Atrium - Drums Male Toilet"],
+    "Keyboard Female Toilet": ["Atrium - Keyboard Female Toilet"],
+    "Drums Female Toilet":        ["Atrium - Drums Female Toilet"],
     "Audi":           ["Auditorium"],
     "Lift Lobby":     ["Lift Lobby & Concept Walkway"],
 }
