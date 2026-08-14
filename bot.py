@@ -88,11 +88,10 @@ def clear_weekend_mode():
     _weekend_mode = None
 
 def get_all_tasks_for_today() -> list[dict]:
-    """Daily tasks, plus weekend-tab tasks if weekend mode is switched on."""
-    tasks = list(fetch_tasks())
+    """Only the Weekend tab's tasks when Weekend Reset mode is on; otherwise only the daily Tasks tab."""
     if weekend_mode_enabled():
-        tasks += fetch_weekend_tasks()
-    return tasks
+        return list(fetch_weekend_tasks())
+    return list(fetch_tasks())
 
 def find_task_by_id(task_id: int) -> dict | None:
     return next((t for t in get_all_tasks_for_today() if t["id"] == task_id), None)
@@ -370,7 +369,7 @@ async def render_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     p          = get_team_progress(team)
     areas      = ", ".join(TEAM_AREAS.get(team, []))
 
-    weekend_note = "\n🧹 _Weekend Reset — weekend tasks included_" if weekend_mode_enabled() else ""
+    weekend_note = "\n🧹 _Weekend Reset — showing Weekend tab tasks only_" if weekend_mode_enabled() else ""
     header = (
         f"📋 *{team} Checklist*\n"
         f"📍 _{areas}_"
@@ -484,7 +483,7 @@ async def reset_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     clear_weekend_mode()
     await update.message.reply_text(
         "🔄 *Progress reset complete.*\nAll teams cleared and tasks refreshed from Google Sheets.\n"
-        "You'll be asked about weekend tasks again on the next /start.",
+        "You'll be asked to pick Weekday Zone BM or Weekend Reset again on the next /start.",
         parse_mode="Markdown"
     )
 
