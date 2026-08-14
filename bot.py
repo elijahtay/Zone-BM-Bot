@@ -1,11 +1,13 @@
 import os
+import re
 import json
 import logging
 import pytz
 import gspread
 from dotenv import load_dotenv
 from google.oauth2.service_account import Credentials
-from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup, InputMediaPhoto
+from telegram.error import BadRequest
 from telegram.ext import (
     ApplicationBuilder, CommandHandler, CallbackQueryHandler,
     ContextTypes
@@ -31,6 +33,7 @@ COL_CATEGORY            = os.environ.get("COL_CATEGORY", "Category")
 COL_INSTRUCTIONS        = os.environ.get("COL_INSTRUCTIONS", "Task Description")
 COL_EQUIPMENT           = os.environ.get("COL_EQUIPMENT", "Equipment")
 COL_LOCATION            = os.environ.get("COL_LOCATION", "Area")
+COL_PHOTO               = os.environ.get("COL_PHOTO", "Photo")
 ADMIN_USER_IDS          = [int(x.strip()) for x in os.environ.get("ADMIN_USER_IDS", "").split(",") if x.strip()]
 RESET_HOUR              = int(os.environ.get("RESET_HOUR", "3"))
 RESET_MINUTE            = int(os.environ.get("RESET_MINUTE", "0"))
@@ -119,6 +122,21 @@ def progress_bar(pct: int, width: int = 10) -> str:
     return "█" * filled + "░" * (width - filled)
 
 # ── Google Sheets ─────────────────────────────────────────────────────────────
+_DRIVE_FILE_RE = re.compile(r"drive\.google\.com/file/d/([a-zA-Z0-9_-]+)")
+_DRIVE_OPEN_RE = re.compile(r"drive\.google\.com/open\?id=([a-zA-Z0-9_-]+)")
+
+def normalize_photo_url(url: str) -> str:
+    """Convert a Google Drive 'share' link into a direct-image URL Telegram can actually fetch.
+    Plain image URLs (Imgur, Google Photos direct links, etc.) pass through unchanged."""
+    url = (url or "").strip()
+    if not url:
+        return ""
+    m = _DRIVE_FILE_RE.search(url) or _DRIVE_OPEN_RE.search(url)
+    if m:
+        return f"https://drive.google.com/uc?export=view&id={m.group(1)}"
+    return url
+
+
 def _fetch_tasks_from_tab(tab_name: str, id_offset: int = 0) -> list[dict]:
     """Read one worksheet tab and return it as a list of task dicts."""
     logger.info(f"[SHEETS] Parsing credentials JSON (length={len(GOOGLE_CREDENTIALS_JSON)})...")
@@ -142,6 +160,7 @@ def _fetch_tasks_from_tab(tab_name: str, id_offset: int = 0) -> list[dict]:
             "instructions": str(row.get(COL_INSTRUCTIONS, "")).strip(),
             "equipment":    str(row.get(COL_EQUIPMENT, "")).strip(),
             "location":     str(row.get(COL_LOCATION, "")).strip(),
+            "photo_url":    normalize_photo_url(str(row.get(COL_PHOTO, ""))),
         }
         if task["task"]:
             tasks.append(task)
@@ -230,6 +249,59 @@ def task_detail_text(task: dict, team: str) -> str:
     if task["equipment"]:    lines.append(f"\n🔧 *Equipment needed:*\n{task['equipment']}")
     return "\n".join(lines)
 
+
+async def safe_edit_text(query, context: ContextTypes.DEFAULT_TYPE, text: str,
+                          parse_mode: str = "Markdown", reply_markup=None):
+    """Like query.edit_message_text, but works even if the current message is a photo
+    (e.g. a task-detail view with a photo guide) — Telegram can't edit a photo message's
+    text directly, so in that case we delete it and send a fresh text message instead."""
+    if query.message and query.message.photo:
+        try:
+            await query.message.delete()
+        except BadRequest:
+            pass
+        await context.bot.send_message(
+            chat_id=query.message.chat_id, text=text,
+            parse_mode=parse_mode, reply_markup=reply_markup
+        )
+    else:
+        await query.edit_message_text(text, parse_mode=parse_mode, reply_markup=reply_markup)
+
+
+async def render_task_detail(query, context: ContextTypes.DEFAULT_TYPE, task: dict, team: str, keyboard):
+    """Show a task's detail, with its photo guide if the sheet has one for this row.
+    Falls back to plain text if there's no photo, or if Telegram can't fetch/display it
+    (bad link, sharing not public, caption too long, etc.)."""
+    text      = task_detail_text(task, team)
+    photo_url = task.get("photo_url", "")
+
+    if photo_url:
+        try:
+            if query.message and query.message.photo:
+                await query.edit_message_media(
+                    media=InputMediaPhoto(media=photo_url, caption=text, parse_mode="Markdown"),
+                    reply_markup=keyboard,
+                )
+            else:
+                # Send the photo first — only delete the old text message once we know
+                # the photo message actually went through, so a failed send never loses
+                # the user's current view.
+                await context.bot.send_photo(
+                    chat_id=query.message.chat_id, photo=photo_url, caption=text,
+                    parse_mode="Markdown", reply_markup=keyboard
+                )
+                if query.message:
+                    try:
+                        await query.message.delete()
+                    except BadRequest:
+                        pass
+            return
+        except BadRequest as e:
+            logger.error(f"[PHOTO] Couldn't show photo for task {task['id']} ({photo_url}): {e}")
+            # Fall through and show it as plain text below instead of failing the whole request.
+
+    await safe_edit_text(query, context, text, reply_markup=keyboard)
+
 # ── Handlers ──────────────────────────────────────────────────────────────────
 def weekend_toggle_keyboard() -> InlineKeyboardMarkup:
     return InlineKeyboardMarkup([
@@ -249,7 +321,7 @@ async def show_team_selection(update: Update, context: ContextTypes.DEFAULT_TYPE
     if update.message:
         await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=team_selection_keyboard(current_team))
     else:
-        await update.callback_query.edit_message_text(msg, parse_mode="Markdown", reply_markup=team_selection_keyboard(current_team))
+        await safe_edit_text(update.callback_query, context, msg, reply_markup=team_selection_keyboard(current_team))
 
 
 async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -262,7 +334,7 @@ async def start_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if update.message:
             await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=weekend_toggle_keyboard())
         else:
-            await update.callback_query.edit_message_text(msg, parse_mode="Markdown", reply_markup=weekend_toggle_keyboard())
+            await safe_edit_text(update.callback_query, context, msg, reply_markup=weekend_toggle_keyboard())
         return
     await show_team_selection(update, context)
 
@@ -291,12 +363,12 @@ async def select_team_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
             "Please note _not_ to wet wash the nursing room areas in the female toilets 🙂"
         )
 
-    await query.edit_message_text(
+    await safe_edit_text(
+        query, context,
         f"✅ You've joined *{team}*!\n\n"
         f"📍 *Your assigned areas:*\n{areas_text}"
         f"{special_notice}\n\n"
         f"What would you like to do?",
-        parse_mode="Markdown",
         reply_markup=main_menu_keyboard()
     )
 
@@ -308,7 +380,8 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     team  = get_user_team(user.id)
 
     if not team:
-        await query.edit_message_text(
+        await safe_edit_text(
+            query, context,
             "⚠️ Please select a team first.",
             reply_markup=team_selection_keyboard()
         )
@@ -318,12 +391,12 @@ async def main_menu_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     areas_text = "\n".join(f"  • {a}" for a in areas)
     p          = get_team_progress(team)
 
-    await query.edit_message_text(
+    await safe_edit_text(
+        query, context,
         f"🏠 *Main Menu*\n\n"
         f"👥 Team: *{team}*\n"
         f"📍 Areas:\n{areas_text}\n\n"
         f"📊 Progress today: {progress_bar(p['pct'])} {p['done']}/{p['total']}",
-        parse_mode="Markdown",
         reply_markup=main_menu_keyboard()
     )
 
@@ -332,9 +405,9 @@ async def change_team_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     query        = update.callback_query
     await query.answer()
     current_team = get_user_team(update.effective_user.id)
-    await query.edit_message_text(
+    await safe_edit_text(
+        query, context,
         "🔄 *Change Team*\n\nSelect your new team:",
-        parse_mode="Markdown",
         reply_markup=team_selection_keyboard(current_team)
     )
 
@@ -346,7 +419,7 @@ async def render_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE, p
 
     if not team:
         msg = "⚠️ You haven't selected a team yet. Use /start to pick your team."
-        if query: await query.edit_message_text(msg)
+        if query: await safe_edit_text(query, context, msg)
         else:     await update.message.reply_text(msg)
         return
 
@@ -358,7 +431,7 @@ async def render_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE, p
             f"_Check that the {COL_LOCATION} column in your sheet matches exactly._"
         )
         markup = InlineKeyboardMarkup([[InlineKeyboardButton("🏠 Main Menu", callback_data="main_menu")]])
-        if query: await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=markup)
+        if query: await safe_edit_text(query, context, msg, reply_markup=markup)
         else:     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=markup)
         return
 
@@ -379,7 +452,7 @@ async def render_checklist(update: Update, context: ContextTypes.DEFAULT_TYPE, p
     )
 
     markup = checklist_keyboard(page_tasks, team, page, total, end)
-    if query: await query.edit_message_text(header, parse_mode="Markdown", reply_markup=markup)
+    if query: await safe_edit_text(query, context, header, reply_markup=markup)
     else:     await update.message.reply_text(header, parse_mode="Markdown", reply_markup=markup)
 
 
@@ -405,19 +478,18 @@ async def task_detail_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     user  = update.effective_user
     team  = get_user_team(user.id)
     if not team:
-        await query.edit_message_text("⚠️ Please select a team first using /start.")
+        await safe_edit_text(query, context, "⚠️ Please select a team first using /start.")
         return
 
     task_id = int(query.data.replace("task_", ""))
     task    = find_task_by_id(task_id)
     if not task:
-        await query.edit_message_text("⚠️ Task not found.")
+        await safe_edit_text(query, context, "⚠️ Task not found.")
         return
 
-    await query.edit_message_text(
-        task_detail_text(task, team),
-        parse_mode="Markdown",
-        reply_markup=task_keyboard(task_id, is_done(team, task_id))
+    await render_task_detail(
+        query, context, task, team,
+        task_keyboard(task_id, is_done(team, task_id))
     )
 
 
@@ -427,20 +499,19 @@ async def toggle_task_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     user  = update.effective_user
     team  = get_user_team(user.id)
     if not team:
-        await query.edit_message_text("⚠️ Please select a team first using /start.")
+        await safe_edit_text(query, context, "⚠️ Please select a team first using /start.")
         return
 
     task_id   = int(query.data.replace("toggle_", ""))
     new_state = toggle_task(team, task_id)
     task      = find_task_by_id(task_id)
     if not task:
-        await query.edit_message_text("⚠️ Task not found.")
+        await safe_edit_text(query, context, "⚠️ Task not found.")
         return
 
-    await query.edit_message_text(
-        task_detail_text(task, team),
-        parse_mode="Markdown",
-        reply_markup=task_keyboard(task_id, new_state)
+    await render_task_detail(
+        query, context, task, team,
+        task_keyboard(task_id, new_state)
     )
 
 
@@ -469,7 +540,7 @@ async def progress_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if len(undone) > 10:
                 msg += f"\n  _...and {len(undone)-10} more_"
 
-    if query: await query.edit_message_text(msg, parse_mode="Markdown", reply_markup=progress_keyboard())
+    if query: await safe_edit_text(query, context, msg, reply_markup=progress_keyboard())
     else:     await update.message.reply_text(msg, parse_mode="Markdown", reply_markup=progress_keyboard())
 
 
