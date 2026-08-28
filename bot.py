@@ -51,6 +51,7 @@ TEAM_AREAS = {
     "Drums Female Toilet":        ["Atrium - Drums Female Toilet"],
     "Audi":           ["Auditorium"],
     "Lift Lobby":     ["Lift Lobby & Concept Walkway"],
+    "Hub":     ["Hub"],
 }
 
 TEAM_NAMES = list(TEAM_AREAS.keys())
@@ -127,13 +128,17 @@ _DRIVE_OPEN_RE = re.compile(r"drive\.google\.com/open\?id=([a-zA-Z0-9_-]+)")
 
 def normalize_photo_url(url: str) -> str:
     """Convert a Google Drive 'share' link into a direct-image URL Telegram can actually fetch.
-    Plain image URLs (Imgur, Google Photos direct links, etc.) pass through unchanged."""
+    Plain image URLs (Imgur, Google Photos direct links, etc.) pass through unchanged.
+
+    Uses Drive's thumbnail endpoint rather than uc?export=view — the latter often serves an
+    HTML interstitial page instead of raw image bytes (Telegram then fails with
+    'Failed to get http url content'), while /thumbnail reliably returns an actual image."""
     url = (url or "").strip()
     if not url:
         return ""
     m = _DRIVE_FILE_RE.search(url) or _DRIVE_OPEN_RE.search(url)
     if m:
-        return f"https://drive.google.com/uc?export=view&id={m.group(1)}"
+        return f"https://drive.google.com/thumbnail?id={m.group(1)}&sz=w1000"
     return url
 
 
